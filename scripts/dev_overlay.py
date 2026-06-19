@@ -185,14 +185,23 @@ def dev_write_note(root: Path, payload: dict) -> str:
     return f"dev_notes/{fname}"
 
 
-def dev_write_session(root: Path, session: dict) -> str:
-    """Write a batched SESSION as one LLM-ready TODO markdown. Returns the relative path."""
+def dev_write_session(root: Path, session: dict, fname: str | None = None) -> str:
+    """Write a batched SESSION as one LLM-ready TODO markdown. Returns the relative path.
+
+    If ``fname`` is given (continuing an existing session — 요청1), overwrite that file in
+    place instead of creating a new timestamped one, so re-saving an in-progress session keeps
+    the same file (the agent's queue stays one entry, not a duplicate)."""
     notes = root / "dev_notes"
     notes.mkdir(exist_ok=True)
     title = (session.get("title") or "세션").strip()
     items = session.get("items") or []
     ts = _dt.datetime.now()
-    fname = f"session_{ts:%Y%m%d_%H%M}_{_slug(title)}.md"
+    if fname:
+        fname = Path(fname).name
+        if not fname.endswith(".md"):
+            fname += ".md"
+    else:
+        fname = f"session_{ts:%Y%m%d_%H%M}_{_slug(title)}.md"
 
     routes = sorted({(it.get("route") or "") for it in items})
     o = [f"# 🛠️ Debugging Session: {title}", "",
@@ -240,6 +249,44 @@ def dev_write_session(root: Path, session: dict) -> str:
     return f"dev_notes/{fname}"
 
 
+def _extract_session_json(txt: str) -> dict | None:
+    """Pull the trailing ```json {title, items} ``` block back out of a saved session file."""
+    blocks = list(_re.finditer(r"```json\s*(.*?)```", txt, _re.S))
+    if not blocks:
+        return None
+    try:
+        return _json.loads(blocks[-1].group(1).strip())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def dev_list_sessions(root: Path) -> list[dict]:
+    """In-progress sessions (dev_notes/session_*.md, excluding done/) — for 이어쓰기 (요청1)."""
+    notes = root / "dev_notes"
+    out: list[dict] = []
+    if not notes.exists():
+        return out
+    for f in notes.glob("session_*.md"):     # glob is non-recursive → done/ already excluded
+        try:
+            data = _extract_session_json(f.read_text(encoding="utf-8"))
+            out.append({"file": f.name,
+                        "title": (data.get("title") if data else None) or f.stem,
+                        "count": len(data.get("items", [])) if data else 0,
+                        "mtime": f.stat().st_mtime})
+        except Exception:  # noqa: BLE001
+            continue
+    out.sort(key=lambda d: d["mtime"], reverse=True)
+    return out
+
+
+def dev_load_session(root: Path, fname: str) -> dict | None:
+    """Re-load a saved session file into memory so more items can be appended (요청1)."""
+    f = root / "dev_notes" / Path(fname).name
+    if not f.exists():
+        return None
+    return _extract_session_json(f.read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------------------
 # Overlay (HTML + CSS + JS) — injected before </body> on every HTML page when KMKT_DEV=1.
 # No single-backslash regex (Python-string pitfall); uses split(' ') + template literals.
@@ -254,7 +301,7 @@ _DEV_OVERLAY_HTML = """
     <span class="kdv-dot"></span><b>DEV</b>
     <button type="button" id="kdvPick" class="kdv-btn on" title="검사 모드(요소 선택). 끄면 앱을 평소처럼 조작">🖱 검사</button>
     <button type="button" id="kdvCount" class="kdv-chip" title="세션 목록 (클릭하여 저장/관리)">📌 0</button>
-    <span class="kdv-hint">클릭=요소 캡처 · ⌘⇧D 종료</span>
+    <span class="kdv-hint">클릭=캡처 · ⌘+클릭=다중추가 · ⌘⇧C=복사 · ⌘⇧D=종료</span>
     <button type="button" id="kdvOff" class="kdv-btn" title="개발자 모드 끄기">✕</button>
   </div>
   <div class="kdv-hl" id="kdvHl"></div>
@@ -264,6 +311,10 @@ _DEV_OVERLAY_HTML = """
     <div class="kdv-sess-h">
       <span class="kdv-sess-ic">🗂</span>
       <input id="kdvSessTitle" class="kdv-sess-title" value="새 세션" spellcheck="false" placeholder="세션 이름">
+    </div>
+    <div class="kdv-sess-cont">
+      <select id="kdvSessPick" class="kdv-sess-pick" title="저장됐던 미완료 세션을 이어서 편집"><option value="">⤴︎ 미완료 세션 이어가기…</option></select>
+      <button type="button" id="kdvLoadSess" class="kdv-fbtn" title="선택한 세션 불러오기">📂</button>
     </div>
     <div class="kdv-sess-list" id="kdvList"><div class="kdv-empty">요소를 클릭 → 메모 → <b>➕ 세션 추가</b><br>모은 뒤 <b>💾 세션 저장</b></div></div>
     <div class="kdv-sess-foot">
@@ -281,6 +332,7 @@ _DEV_OVERLAY_HTML = """
     <textarea id="kdvMemo" placeholder="이 부분 메모 / 수정 요청 — 에이전트에게 그대로 전달됩니다…"></textarea>
     <div class="kdv-act">
       <span class="kdv-saved" id="kdvSaved"></span>
+      <button type="button" id="kdvCopy" class="kdv-add" title="요소+소스 정보 클립보드 복사 (⌘⇧C)">📋 복사</button>
       <button type="button" id="kdvAddSess" class="kdv-add">➕ 세션 추가</button>
       <button type="button" id="kdvSave" class="kdv-save">💾 즉시 저장</button>
     </div>
@@ -309,7 +361,8 @@ _DEV_OVERLAY_HTML = """
 .kdv-chip:hover{background:rgba(10,132,255,.36);}
 .kdv-chip.has{background:#0a84ff;color:#fff;}
 html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
-.kdv-hl{position:fixed;z-index:2147482500;pointer-events:none;border:2px solid #0a84ff;border-radius:3px;
+/* z-index 를 떠있는 AI 채팅창(#kmktAiWin, 2147483001) 위로 올려 그 안의 요소도 하이라이트가 보이게(요청5) */
+.kdv-hl{position:fixed;z-index:2147483300;pointer-events:none;border:2px solid #0a84ff;border-radius:3px;
   background:rgba(10,132,255,.14);box-shadow:0 0 0 1px rgba(10,132,255,.5);display:none;}
 /* ── 세션 패널 (배지에서 드롭다운, 다크) ── */
 .kdv-sess{position:fixed;top:52px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:2147483620;
@@ -364,6 +417,41 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
 .kdv-add:hover{background:rgba(10,132,255,.32);}
 .kdv-save{border:0;background:#0a84ff;color:#fff;font:inherit;font-size:12px;font-weight:700;height:30px;padding:0 12px;border-radius:9px;cursor:pointer;}
 .kdv-save:hover{background:#0073ea;}
+/* ── 요청4: 우리 UI(팝오버·세션·배지) 위에서는 크로스헤어(+) 대신 자연스러운 커서 ── */
+html.kdv-cursor #kmktDev,html.kdv-cursor #kmktDev *{cursor:auto !important;}
+html.kdv-cursor #kmktDev button,html.kdv-cursor #kmktDev .kdv-chip,html.kdv-cursor #kmktDev .kdv-item-x,
+html.kdv-cursor #kmktDev select{cursor:pointer !important;}
+html.kdv-cursor #kmktDev textarea,html.kdv-cursor #kmktDev input{cursor:text !important;}
+html.kdv-cursor #kmktDev .kdv-pop-h{cursor:move !important;}
+/* ── 요청4: 팝오버/세션 스크롤바를 어두운 테마로 ── */
+#kmktDev .kdv-info,#kmktDev .kdv-src,#kmktDev .kdv-sess-list{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent;}
+#kmktDev ::-webkit-scrollbar{width:10px;height:10px;}
+#kmktDev ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:7px;border:2px solid transparent;background-clip:padding-box;}
+#kmktDev ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.36);background-clip:padding-box;}
+#kmktDev ::-webkit-scrollbar-track{background:transparent;}
+/* ── 요청4: 팝오버 상단 드래그 핸들 ── */
+.kdv-pop-h{cursor:move;user-select:none;-webkit-user-select:none;}
+.kdv-pop-h button{cursor:pointer;}
+/* ── 요청1: 미완료 세션 이어가기 행 ── */
+.kdv-sess-cont{display:flex;gap:6px;padding:8px 12px 0;}
+.kdv-sess-pick{flex:1;min-width:0;border:0;border-radius:8px;height:30px;padding:0 8px;font:inherit;font-size:11.5px;font-weight:600;
+  background:rgba(255,255,255,.06);color:#cfe1ee;outline:none;}
+.kdv-sess-pick:focus{box-shadow:0 0 0 2px rgba(10,132,255,.5);}
+.kdv-sess-cont .kdv-fbtn{flex:0 0 38px;}
+/* ── 작업1: 세션 항목 메모 인라인 편집 ── */
+.kdv-item-memo{font-size:11px;color:#9fb0bc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;border-radius:4px;padding:1px 3px;}
+.kdv-item-memo:hover{background:rgba(120,180,255,.14);color:#cfe1ee;}
+.kdv-memo-edit{width:100%;margin-top:2px;border:1px solid #0a84ff;border-radius:6px;background:rgba(10,20,32,.9);
+  color:#eaf4fb;font:inherit;font-size:11.5px;padding:5px 7px;resize:vertical;outline:none;}
+/* ── 요청3(피드백): ⌘ 다중선택 — 팝오버 목록 + 페이지 위 번호 박스 ── */
+.kdv-multi-h{font-size:12px;font-weight:700;color:#ffd089;margin-bottom:6px;}
+.kdv-msel{display:flex;align-items:center;gap:7px;padding:3px 0;}
+.kdv-msel code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.kdv-mn{flex:0 0 16px;height:16px;border-radius:50%;background:#ffb02e;color:#1a1a1a;font:800 10px/16px ui-monospace,monospace;text-align:center;}
+#kdvMultiBox .kdv-mbox{position:fixed;z-index:2147483290;pointer-events:none;border:2px solid #ffb02e;border-radius:3px;
+  background:rgba(255,176,46,.13);box-shadow:0 0 0 1px rgba(255,176,46,.55);}
+#kdvMultiBox .kdv-mbox-n{position:absolute;top:-9px;left:-9px;width:17px;height:17px;border-radius:50%;
+  background:#ffb02e;color:#1a1a1a;font:800 10px/17px ui-monospace,monospace;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);}
 @media (prefers-reduced-motion:reduce){.kdv-dot{animation:none;}.kdv-sess{transition:none;}}
 </style>
 <script>(function(){
@@ -373,8 +461,10 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
       memo=document.getElementById('kdvMemo'),saved=document.getElementById('kdvSaved'),
       pickBtn=document.getElementById('kdvPick'),
       listEl=document.getElementById('kdvList'),countEl=document.getElementById('kdvCount'),
-      titleEl=document.getElementById('kdvSessTitle'),sideMsg=document.getElementById('kdvSideMsg');
-  var on=false,pick=true,sel=null,cx=0,cy=0,cands=[],anchors=[];
+      titleEl=document.getElementById('kdvSessTitle'),sideMsg=document.getElementById('kdvSideMsg'),
+      copyBtn=document.getElementById('kdvCopy'),sessPick=document.getElementById('kdvSessPick'),
+      loadBtn=document.getElementById('kdvLoadSess');
+  var on=false,pick=true,sel=null,cx=0,cy=0,cands=[],anchors=[],multi=[];
   function isOurs(el){return el&&el.closest&&el.closest('#kmktDev');}
   function setOn(v){on=v;root.setAttribute('data-on',v?'1':'0');root.setAttribute('aria-hidden',v?'false':'true');
     document.documentElement.classList.toggle('kdv-cursor',v&&pick);
@@ -384,7 +474,7 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
   function hideHl(){hl.style.display='none';}
   function showHl(el){var r=el.getBoundingClientRect();hl.style.display='block';
     hl.style.left=r.left+'px';hl.style.top=r.top+'px';hl.style.width=r.width+'px';hl.style.height=r.height+'px';}
-  function closePop(){pop.classList.remove('show');sel=null;}
+  function closePop(){pop.classList.remove('show');sel=null;clearMulti();}
   function flash(t){sideMsg.textContent=t;setTimeout(function(){if(sideMsg.textContent===t)sideMsg.textContent='';},2600);}
   // ── element info (no regex except \\s; split(' ')) + ancestor trace (방안1-2) ──
   function classList(el){var c=(el.className&&typeof el.className==='string')?el.className:'';
@@ -471,6 +561,7 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
     }).join('');
   }
   function openPop(el){
+    clearMulti();   // 일반 클릭이면 ⌘ 다중선택 초기화
     sel=elInfo(el);renderInfo(sel);cands=[];srcBox.innerHTML='<div class="kdv-src-load">소스 위치 찾는 중…</div>';
     saved.textContent='';memo.value='';root.classList.remove('sess-open');
     pop.classList.add('show');
@@ -487,6 +578,7 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
   function payload(){return {route:location.pathname+location.search,element:sel,anchors:anchors,
     candidates:cands,memo:memo.value};}
   function save(){
+    if(isMulti()){multiAddAll(function(){saveSession();closePop();});return;}   // 다중: 추가 후 세션 저장
     if(!sel)return;saved.textContent='저장 중…';
     fetch('/api/dev/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())})
       .then(function(r){return r.json();}).then(function(j){
@@ -495,6 +587,7 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
       .catch(function(e){saved.textContent='실패: '+e.message;});
   }
   function addToSession(){
+    if(isMulti()){multiAddAll(function(){closePop();});return;}   // 다중: 모두 세션에 추가
     if(!sel)return;saved.textContent='추가 중…';
     fetch('/api/dev/session/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())})
       .then(function(r){return r.json();}).then(function(j){
@@ -502,21 +595,150 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
         else saved.textContent='실패: '+((j&&j.error)||'?');})
       .catch(function(e){saved.textContent='실패: '+e.message;});
   }
+  // ── 요청2: 요소+소스 정보 클립보드 복사 (⌘⇧C 또는 📋 버튼) ──
+  function copyText(){
+    if(!sel)return '';
+    var L=['route: '+location.pathname+location.search,
+           'selector: '+(sel.selector||''),
+           'tag/id/classes: '+sel.tag+' / '+(sel.id||'-')+' / '+(sel.classes||'-')];
+    if(sel.ancestor_id||sel.ancestor_classes)L.push('ancestor: #'+(sel.ancestor_id||'')+' .'+(sel.ancestor_classes||''));
+    if(sel.text)L.push('text: '+sel.text);
+    if(sel.chart)L.push('chart: '+sel.chart+' (마크업 아님 — 차트 설정 코드를 고칠 것)');
+    if(anchors&&anchors.length)L.push('anchors: '+anchors.join('  '));
+    if(cands&&cands.length){L.push('source candidates (file:line):');
+      cands.forEach(function(c){L.push('  '+c.file+':'+c.line+' ['+c.kind+'] '+c.snippet);});}
+    if(memo.value.trim())L.push('memo: '+memo.value.trim());
+    return L.join('\\n');
+  }
+  function multiText(){
+    var blocks=multi.map(function(m,i){
+      var L=['['+(i+1)+'] selector: '+(m.info.selector||''),
+             '    tag/id/classes: '+m.info.tag+' / '+(m.info.id||'-')+' / '+(m.info.classes||'-')];
+      if(m.info.text)L.push('    text: '+m.info.text);
+      if(m.cands&&m.cands.length)m.cands.forEach(function(c){L.push('    '+c.file+':'+c.line+' ['+c.kind+'] '+c.snippet);});
+      return L.join('\\n');});
+    return 'route: '+location.pathname+location.search+'\\n'+blocks.join('\\n')
+      +(memo.value.trim()?'\\nmemo(공통): '+memo.value.trim():'');
+  }
+  function doCopy(t){
+    function ok(){saved.textContent='✓ 클립보드 복사됨';}
+    function fb(){try{var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');document.body.removeChild(ta);ok();}
+      catch(e){saved.textContent='복사 실패';}}
+    try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(ok,fb);else fb();}catch(e){fb();}
+  }
+  function copyInfo(){
+    if(isMulti()){doCopy(multiText());return;}
+    if(!sel){flash('복사할 요소가 없습니다');return;}
+    doCopy(copyText());
+  }
+  // ── 요청3(피드백): ⌘+클릭 = 여러 요소를 누적 선택 → 팝오버에 한 번에 반영, 공통 메모로 일괄 추가 ──
+  function isMulti(){return multi.length>0;}
+  function clearMulti(){multi=[];var c=document.getElementById('kdvMultiBox');if(c&&c.parentNode)c.parentNode.removeChild(c);}
+  function multiBoxes(){
+    var c=document.getElementById('kdvMultiBox');
+    if(!c){c=document.createElement('div');c.id='kdvMultiBox';root.appendChild(c);}
+    c.innerHTML=multi.map(function(m,i){var r=m.el.getBoundingClientRect();
+      return '<div class="kdv-mbox" style="left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;">'
+        +'<span class="kdv-mbox-n">'+(i+1)+'</span></div>';}).join('');
+  }
+  function multiAdd(el){
+    var info=elInfo(el),anc=anchors.slice();   // elInfo 가 전역 anchors 를 채운다
+    if(multi.some(function(m){return m.info.selector===info.selector;})){flash('이미 선택됨 ('+multi.length+')');return;}
+    var entry={el:el,info:info,anchors:anc,cands:[]};multi.push(entry);
+    multiBoxes();openMulti();
+    fetch('/api/dev/locate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({route:location.pathname+location.search,id:info.id,classes:info.classes,text:info.text,
+        tag:info.tag,ancestor_id:info.ancestor_id,ancestor_classes:info.ancestor_classes})})
+      .then(function(r){return r.json();}).then(function(j){entry.cands=(j&&j.candidates)||[];if(isMulti())renderMulti();})
+      .catch(function(){});
+  }
+  function openMulti(){
+    sel=null;root.classList.remove('sess-open');saved.textContent='';
+    if(!pop.classList.contains('show')){
+      pop.classList.add('show');
+      var pw=pop.offsetWidth||420,ph=pop.offsetHeight||360;
+      pop.style.left=Math.max(10,Math.min(cx+12,window.innerWidth-pw-10))+'px';
+      pop.style.top=Math.max(50,Math.min(cy+12,window.innerHeight-ph-10))+'px';
+    }
+    renderMulti();setTimeout(function(){memo.focus();},40);
+  }
+  function renderMulti(){
+    info.innerHTML='<div class="kdv-multi-h">⌘ 다중선택 <b>'+multi.length+'</b>개 · 공통 메모로 일괄 추가</div>'
+      +multi.map(function(m,i){return '<div class="kdv-msel"><span class="kdv-mn">'+(i+1)+'</span>'
+        +'<code>'+esc(m.info.selector||m.info.tag||'?')+'</code>'
+        +'<button class="kdv-item-x" data-mi="'+i+'" title="선택 해제">✕</button></div>';}).join('');
+    Array.prototype.forEach.call(info.querySelectorAll('.kdv-item-x'),function(b){
+      b.addEventListener('click',function(){multi.splice(parseInt(b.dataset.mi,10),1);
+        if(isMulti()){multiBoxes();renderMulti();}else{clearMulti();closePop();}});});
+    var nc=multi.reduce(function(a,m){return a+(m.cands?m.cands.length:0);},0);
+    srcBox.innerHTML='<div class="kdv-src-load">소스 후보 '+nc+'개 · ➕ 세션 추가 = 각 요소를 항목으로(공통 메모) · 💾 = 추가 후 세션 저장</div>';
+  }
+  function multiAddAll(then){
+    if(!isMulti())return;var items=multi.slice(),mm=memo.value;saved.textContent='추가 중…';
+    (function next(i){
+      if(i>=items.length){flash('세션에 '+items.length+'개 추가됨');if(then)then();return;}
+      var m=items[i];
+      fetch('/api/dev/session/add',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({route:location.pathname+location.search,element:m.info,anchors:m.anchors,candidates:m.cands,memo:mm})})
+        .then(function(r){return r.json();}).then(function(j){if(j&&j.ok)renderList(j.items||[]);next(i+1);})
+        .catch(function(){next(i+1);});
+    })(0);
+  }
   // ── session (badge counter + dropdown panel) ──
   function renderList(items){
     var n=items.length;countEl.textContent='📌 '+n;countEl.classList.toggle('has',n>0);
     if(!n){listEl.innerHTML='<div class="kdv-empty">요소를 클릭 → 메모 → <b>➕ 세션 추가</b><br>모은 뒤 <b>💾 세션 저장</b></div>';return;}
     listEl.innerHTML=items.map(function(it,i){var el=it.element||{};
       return '<div class="kdv-item"><span class="kdv-ic">📍</span><span class="kdv-item-t">'
-        +'<b>'+esc(el.selector||el.tag||'?')+'</b><span>'+esc(it.memo||'(메모 없음)')+'</span></span>'
+        +'<b>'+esc(el.selector||el.tag||'?')+'</b>'
+        +'<span class="kdv-item-memo" data-i="'+i+'" title="클릭하여 메모 수정">'+esc(it.memo||'(메모 없음 — 클릭해 입력)')+'</span></span>'
         +'<button class="kdv-item-x" data-i="'+i+'" title="제거">✕</button></div>';}).join('');
     Array.prototype.forEach.call(listEl.querySelectorAll('.kdv-item-x'),function(b){
       b.addEventListener('click',function(){removeItem(parseInt(b.dataset.i,10));});});
+    Array.prototype.forEach.call(listEl.querySelectorAll('.kdv-item-memo'),function(s){   // 작업1: 메모 인라인 수정
+      s.addEventListener('click',function(){editMemo(parseInt(s.dataset.i,10),s,items);});});
+  }
+  function editMemo(i,spanEl,items){
+    var cur=(items[i]&&items[i].memo)||'';
+    var ta=document.createElement('textarea');ta.className='kdv-memo-edit';ta.value=cur;ta.rows=2;
+    spanEl.parentNode.replaceChild(ta,spanEl);ta.focus();ta.select();
+    var doneFlag=false;
+    function commit(){if(doneFlag)return;doneFlag=true;
+      fetch('/api/dev/session/update',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({index:i,memo:ta.value})}).then(function(r){return r.json();})
+        .then(function(j){renderList((j&&j.items)||items);flash('✓ 메모 수정됨');})
+        .catch(function(){renderList(items);});}
+    ta.addEventListener('keydown',function(e){
+      if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();ta.blur();}      // ⌘/Ctrl+Enter = 저장
+      else if(e.key==='Escape'){e.stopPropagation();doneFlag=true;renderList(items);} // 취소
+    });
+    ta.addEventListener('blur',commit);
   }
   function loadSession(){
+    listSessions();
     fetch('/api/dev/session/state').then(function(r){return r.json();}).then(function(j){
       if(j){if(j.title&&document.activeElement!==titleEl)titleEl.value=j.title;renderList(j.items||[]);}})
       .catch(function(){});
+  }
+  // ── 요청1: 미완료 세션 목록 + 이어가기 ──
+  function listSessions(){
+    if(!sessPick)return;
+    fetch('/api/dev/session/list').then(function(r){return r.json();}).then(function(j){
+      var ss=(j&&j.sessions)||[];
+      sessPick.innerHTML='<option value="">⤴︎ 미완료 세션 이어가기…</option>'+
+        ss.map(function(s){return '<option value="'+esc(s.file)+'">'+esc(s.title)+' ('+s.count+')</option>';}).join('');
+      if(j&&j.current_file)sessPick.value=j.current_file;
+    }).catch(function(){});
+  }
+  function loadExisting(){
+    var f=sessPick&&sessPick.value;if(!f){flash('이어갈 세션을 먼저 선택하세요');return;}
+    fetch('/api/dev/session/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:f})})
+      .then(function(r){return r.json();}).then(function(j){
+        if(j&&j.ok){if(j.title)titleEl.value=j.title;renderList(j.items||[]);
+          flash('✓ 이어가기: '+f+' ('+(j.items?j.items.length:0)+'개) — 추가 후 저장하면 이 파일을 갱신');}
+        else flash('불러오기 실패: '+((j&&j.error)||'?'));})
+      .catch(function(e){flash('실패: '+e.message);});
   }
   function removeItem(i){
     fetch('/api/dev/session/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})})
@@ -538,7 +760,9 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
   document.addEventListener('keydown',function(e){
     var k=(e.key||'').toLowerCase();
     if((e.metaKey||e.ctrlKey)&&e.shiftKey&&k==='d'){e.preventDefault();setOn(!on);return;}
-    if(on&&e.key==='Escape'){if(pop.classList.contains('show'))closePop();
+    if(on&&(e.metaKey||e.ctrlKey)&&e.shiftKey&&k==='c'&&pop.classList.contains('show')){e.preventDefault();copyInfo();return;}  // 요청2
+    var ae=document.activeElement,inEdit=ae&&ae.classList&&ae.classList.contains('kdv-memo-edit');  // 작업1: 인라인 메모 편집 중엔 Esc=취소(필드가 처리)
+    if(on&&e.key==='Escape'){if(inEdit)return;if(pop.classList.contains('show'))closePop();
       else if(root.classList.contains('sess-open'))root.classList.remove('sess-open');else setOn(false);}
   },true);
   document.addEventListener('mousemove',function(e){
@@ -549,14 +773,17 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
   function capture(e){
     if(!on||!pick)return;
     if(isOurs(e.target))return;
-    // AI 질문 FAB 는 가로채지 않는다 → dev 모드에서도 챗을 열어 그 내부를 검사할 수 있게(요청3-a).
+    // AI 질문 FAB 는 가로채지 않는다 → dev 모드에서도 챗을 열어 그 내부를 검사할 수 있게(요청5).
     if(e.target.closest&&e.target.closest('#kmktAiFab'))return;
     e.preventDefault();e.stopPropagation();
-    cx=e.clientX;cy=e.clientY;hideHl();openPop(e.target);
+    cx=e.clientX;cy=e.clientY;hideHl();
+    if(e.metaKey){multiAdd(e.target);return;}   // 요청3: ⌘+클릭 = 누적 다중선택 → 팝오버에 한 번에 반영
+    openPop(e.target);
   }
   document.addEventListener('click',capture,true);
   document.addEventListener('contextmenu',function(e){if(on&&pick&&!isOurs(e.target))capture(e);},true);
-  document.addEventListener('scroll',function(){if(on)hideHl();},true);
+  document.addEventListener('scroll',function(){if(on){hideHl();if(multi.length)multiBoxes();}},true);
+  window.addEventListener('resize',function(){if(on&&multi.length)multiBoxes();});
   document.getElementById('kdvOff').addEventListener('click',function(){setOn(false);});
   document.getElementById('kdvPopX').addEventListener('click',closePop);
   document.getElementById('kdvSave').addEventListener('click',save);
@@ -565,5 +792,21 @@ html.kdv-cursor,html.kdv-cursor *{cursor:crosshair !important;}
   document.getElementById('kdvSaveSess').addEventListener('click',saveSession);
   countEl.addEventListener('click',function(){root.classList.toggle('sess-open');if(root.classList.contains('sess-open'))loadSession();});
   pickBtn.addEventListener('click',function(){setPick(!pick);});
+  // 요청2: 복사 버튼 · 요청1: 세션 이어가기 불러오기
+  if(copyBtn)copyBtn.addEventListener('click',copyInfo);
+  if(loadBtn)loadBtn.addEventListener('click',loadExisting);
+  // 요청4: 팝오버 상단(헤더) 드래그로 이동
+  (function(){var h=pop.querySelector('.kdv-pop-h'),drag=false,sx,sy,ox,oy;if(!h)return;
+    h.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;
+      drag=true;var r=pop.getBoundingClientRect();ox=r.left;oy=r.top;sx=e.clientX;sy=e.clientY;
+      try{h.setPointerCapture(e.pointerId);}catch(_){}e.preventDefault();});
+    h.addEventListener('pointermove',function(e){if(!drag)return;
+      var nx=ox+(e.clientX-sx),ny=oy+(e.clientY-sy);
+      nx=Math.max(6,Math.min(nx,window.innerWidth-pop.offsetWidth-6));
+      ny=Math.max(46,Math.min(ny,window.innerHeight-44));
+      pop.style.left=nx+'px';pop.style.top=ny+'px';});
+    function end(e){drag=false;try{h.releasePointerCapture(e.pointerId);}catch(_){}}
+    h.addEventListener('pointerup',end);h.addEventListener('pointercancel',end);
+  })();
 })();</script>
 """

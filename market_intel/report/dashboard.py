@@ -589,7 +589,7 @@ def consensus_gauge(recomm_mean: float, dist: dict | None = None) -> go.Figure:
         mode="gauge", value=round(v, 2),
         title={"text": f"<b style='color:#1F3864;font-size:19px'>{opinion_label(v)} {v:.2f}점</b>"
                        f"<br><span style='font-size:10.5px;color:#8a93a6'>"
-                       f"적극매도1 · 매도2 · 중립3 · 매수4 · 적극매수5</span>",
+                       f"점수 기준 1=적극매도 · 2=매도 · 3=중립 · 4=매수 · 5=적극매수</span>",
                "font": {"size": 15}},
         gauge={
             "axis": {"range": [1, 5], "tickvals": [1, 2, 3, 4, 5], "tickfont": {"size": 10}},

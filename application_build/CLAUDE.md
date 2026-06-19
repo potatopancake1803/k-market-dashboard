@@ -213,6 +213,19 @@ Backend source of truth: `scripts/market_dashboard3_realtime.py`. `app.py` loads
    radii pill=100 / glass=26 / lg=16 / md=11, blur 50px (saturate 180%), SF Pro type scale.
 2. **No empty space / no overflow (공간 효율).** Layouts must fill their space without awkward gaps AND content
    must NEVER overflow or get clipped by its container. Concretely:
+   - **Canonical page width (모든 페이지 통일).** Every page's *main content* is constrained to
+     **`max-width:1200px; margin:0 auto`** on its top-level content wrapper, with the page's own
+     background left **full-bleed behind it** (so the viewport fills with the page bg and the content
+     is centered with side margins). This matches the domestic stock report `/dashboard`
+     (`market_intel/report/dashboard.py` `.pane{max-width:1200px;margin:0 auto}`), which is the
+     **reference interface** — make every other page (`_INDEX_HTML`, `_MACRO_HTML`, `_WORLD_HTML`,
+     `_RESEARCH_HTML`, `_BACKTEST_HTML`, `_OVERSEAS_HTML`, `_REALTIME_HTML`, …) match it. **Never let a
+     page's content run full-bleed edge-to-edge.** Constrain the content wrapper, not the `<body>` bg.
+   - **No dead/blank zones (요청).** After any layout change, confirm there is **no awkward empty space**
+     — e.g. a short column leaving a large blank below a taller neighbor (the realtime 호가창/페이퍼
+     trading case). Fixes: let panels flow/reflow to fill, equalize column heights, move/stack content,
+     or make the region resizable. This check is **mandatory** for every page touched, alongside the
+     no-overflow check below.
    - Tables/cards in fixed/grid columns: the column must be wide enough OR the cell content must wrap/ellipsis/shrink
      (`min-width:0`, `overflow:hidden`, `text-overflow:ellipsis`, or `table-layout:fixed`). Verify the rightmost
      column is not cut off at the target width.

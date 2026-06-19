@@ -131,6 +131,8 @@ from pure_helpers import (
 # 개발자 모드(changes_81/82) — KMKT_DEV=1 일 때만 활성. 오버레이 + 소스 grep + 노트/세션 저장.
 from dev_overlay import (
     _DEV_OVERLAY_HTML,
+    dev_list_sessions,
+    dev_load_session,
     dev_locate,
     dev_template_guess,
     dev_write_note,
@@ -219,6 +221,18 @@ def _dev_session_remove():
     return jsonify({"ok": True, "items": _DEV_SESSION["items"]})
 
 
+@app.post("/api/dev/session/update")
+def _dev_session_update():
+    """세션 항목의 메모를 수정(작업1) — 패널에서 메모 클릭 → 인라인 편집."""
+    if not _DEV_ENABLED:
+        return jsonify({"error": "dev mode off"}), 403
+    d = request.get_json(silent=True) or {}
+    i = d.get("index", -1)
+    if isinstance(i, int) and 0 <= i < len(_DEV_SESSION["items"]):
+        _DEV_SESSION["items"][i]["memo"] = str(d.get("memo", ""))[:4000]
+    return jsonify({"ok": True, "items": _DEV_SESSION["items"]})
+
+
 @app.post("/api/dev/session/new")
 def _dev_session_new():
     if not _DEV_ENABLED:
@@ -226,7 +240,32 @@ def _dev_session_new():
     title = (request.get_json(silent=True) or {}).get("title") or "새 세션"
     _DEV_SESSION["title"] = title
     _DEV_SESSION["items"] = []
+    _DEV_SESSION.pop("_file", None)   # 새 세션은 기존 파일과의 연결 해제(요청1)
     return jsonify({"ok": True})
+
+
+# 요청1: 이미 저장됐거나 앱 재시작으로 메모리가 비었어도, 미완료 세션 파일을 다시 불러와 항목 추가.
+@app.get("/api/dev/session/list")
+def _dev_session_list():
+    if not _DEV_ENABLED:
+        return jsonify({"error": "dev mode off"}), 403
+    return jsonify({"sessions": dev_list_sessions(_DEV_ROOT),
+                    "current_file": _DEV_SESSION.get("_file", "")})
+
+
+@app.post("/api/dev/session/load")
+def _dev_session_load():
+    if not _DEV_ENABLED:
+        return jsonify({"error": "dev mode off"}), 403
+    fname = (request.get_json(silent=True) or {}).get("file", "")
+    data = dev_load_session(_DEV_ROOT, fname)
+    if data is None:
+        return jsonify({"ok": False, "error": "세션 파일을 찾을 수 없습니다"}), 404
+    _DEV_SESSION["title"] = data.get("title") or "세션"
+    _DEV_SESSION["items"] = data.get("items") or []
+    _DEV_SESSION["_file"] = Path(fname).name   # 저장 시 이 파일을 덮어쓴다(이어쓰기)
+    return jsonify({"ok": True, "title": _DEV_SESSION["title"],
+                    "items": _DEV_SESSION["items"], "file": _DEV_SESSION["_file"]})
 
 
 @app.post("/api/dev/session/save")
@@ -239,8 +278,10 @@ def _dev_session_save():
     if not _DEV_SESSION["items"]:
         return jsonify({"ok": False, "error": "세션이 비어 있습니다"}), 400
     try:
-        path = dev_write_session(_DEV_ROOT, _DEV_SESSION)
+        # 이어쓰던 세션(_file)이면 같은 파일을 덮어쓰고, 아니면 새 파일을 만든다(요청1).
+        path = dev_write_session(_DEV_ROOT, _DEV_SESSION, fname=_DEV_SESSION.get("_file"))
         _DEV_SESSION["items"] = []
+        _DEV_SESSION.pop("_file", None)
         return jsonify({"ok": True, "path": path})
     except Exception as e:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -1264,15 +1305,14 @@ def _marketmap_fig(mkt: str) -> str | None:
         marker=dict(colors=colors, cmid=0, cmin=-3, cmax=3,
                     colorscale=[[0, "#2E75B6"], [0.5, "#4a5160"], [1, "#FF3B30"]],
                     line=dict(width=1, color="rgba(11,15,32,.55)")),
-        texttemplate="%{label}<br>%{text}", textposition="middle center",
-        textfont=dict(size=15, color="#fff", family="-apple-system,BlinkMacSystemFont,sans-serif"),
+        texttemplate="<b>%{label}</b><br>%{text}", textposition="middle center",
+        textfont=dict(size=22, color="#fff", family="-apple-system,BlinkMacSystemFont,sans-serif"),
         hovertemplate="<b>%{label}</b><br>시총 %{value:,.0f}억<br>등락 %{text}<extra></extra>",
         pathbar=dict(visible=True, thickness=22)))
-    # 큰 칸=큰 글씨로 자동 스케일(텍스트가 칸에 맞게 축소/확대)되, size 상한을 15 로 올려 큰 칸 가독성↑.
-    # uniformtext(minsize=10,mode="hide"): 10px 미만으로 줄여야 들어가는 작은 칸은 라벨을 *숨겨*
-    # 얇고 깨알같은 글자로 지저분해지지 않게 한다(가독성·정돈 둘 다 — 세션 Task3).
+    # 세션2 Task2/3: uniformtext 를 제거해 Plotly 가 *칸 크기에 비례해* 글자를 자동 스케일하도록 한다
+    # (큰 종목·섹터 칸 = 큰 글씨, 작아서 안 들어가는 칸은 자동 숨김). 라벨은 <b> 로 볼드, 상한 size=22.
+    # 섹터(부모) 칸은 면적이 커서 자연히 더 큰 글씨가 되어 위계가 드러난다.
     fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), paper_bgcolor="rgba(0,0,0,0)",
-                      uniformtext=dict(minsize=10, mode="hide"),
                       font=dict(family="-apple-system,BlinkMacSystemFont,sans-serif"))
     figjson = fig.to_json()
     _MARKETMAP_CACHE[mkt] = (figjson, time.time())
@@ -1400,8 +1440,8 @@ def _usmap_fig(exch: str = "all") -> str | None:
         marker=dict(colors=colors, cmid=0, cmin=-3, cmax=3,
                     colorscale=[[0, "#cf3a3a"], [0.5, "#4a5160"], [1, "#2e9e5b"]],
                     line=dict(width=1, color="rgba(11,15,32,.55)")),
-        texttemplate="%{label}<br>%{text}", textposition="middle center",
-        textfont=dict(color="#fff", family="-apple-system,BlinkMacSystemFont,sans-serif"),
+        texttemplate="<b>%{label}</b><br>%{text}", textposition="middle center",   # 세션2 Task2/3: 볼드
+        textfont=dict(size=22, color="#fff", family="-apple-system,BlinkMacSystemFont,sans-serif"),  # 큰 칸=큰 글씨(auto-scale 상한↑)
         hovertemplate="<b>%{label}</b><br>등락 %{text}<extra></extra>",
         pathbar=dict(visible=True, thickness=22)))
     fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), paper_bgcolor="rgba(0,0,0,0)",
@@ -3910,7 +3950,7 @@ def suggest():
 # ⚠️ LM Studio /v1/models 의 data[0] 는 순서 보장이 없어(임베딩 모델·12B 가 먼저 올 수 있음)
 #    그걸 그대로 쓰면 엉뚱한/느린 모델이 잡힌다 → 아래 선택기로 결정적으로 고른다.
 #    환경변수 KMKT_LLM_MODEL 로 임의 모델을 강제할 수 있다.
-_LLM_PREFERRED = "qwen3-4b-2507"   # 부분일치로 매칭 (예: "qwen/qwen3-4b-2507")
+_LLM_PREFERRED = "gemma-4-12b-qat"   # 기본 모델(dev_notes 260619_#1 Task3). 부분일치 (예: "google/gemma-4-12b-qat"). env KMKT_LLM_MODEL 로 강제 override 가능.
 _LLM_MAX_TOKENS = 1200             # 비추론 모델 기본 토큰(한국어 토큰 잘림 방지)
 
 # 추론(thinking) 계열 모델 패턴 — 답변 전 <think> 단계에 토큰을 대량 소모한다.
@@ -5929,6 +5969,46 @@ def api_llm_loaded() -> Response:
         return jsonify({"up": True, "loaded": bool(loaded), "id": (loaded[0] if loaded else "")})
     except Exception:  # noqa: BLE001
         return jsonify({"up": False, "loaded": False, "id": ""})
+
+
+# ── AI 환경설정 영구 저장 (dev_notes 260619_#1 Task4) ─────────────────────────
+# WKWebView 의 localStorage 가 앱 재시작 시 휘발될 수 있어, 시스템 프롬프트·provider·
+# 모델 선택을 서버 파일에 보관해 재시작에도 유지한다. 프런트는 로드 시 이 값으로
+# localStorage 를 시드하고, 변경 시 여기에 저장한다.
+_AI_PREFS_FILE = _CACHE_DIR / "ai_prefs.json"
+_AI_PREFS_ALLOWED = {"gsys", "provider", "gemini_model"}
+
+
+def _ai_prefs_read() -> dict:
+    import json as _json
+    try:
+        if _AI_PREFS_FILE.exists():
+            return _json.loads(_AI_PREFS_FILE.read_text("utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+@app.get("/api/ai/prefs")
+def api_ai_prefs_get() -> Response:
+    return jsonify(_ai_prefs_read())
+
+
+@app.post("/api/ai/prefs")
+def api_ai_prefs_set() -> Response:
+    """허용 키(gsys/provider/gemini_model)만 부분 병합 저장."""
+    import json as _json
+    body = request.get_json(silent=True) or {}
+    cur = _ai_prefs_read()
+    for k, v in body.items():
+        if k in _AI_PREFS_ALLOWED and isinstance(v, str):
+            cur[k] = v[:4000]   # 길이 가드
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _AI_PREFS_FILE.write_text(_json.dumps(cur, ensure_ascii=False), "utf-8")
+        return jsonify({"ok": True, "prefs": cur})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(e)})
 
 
 def _llm_target_key() -> str | None:

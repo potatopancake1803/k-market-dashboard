@@ -879,27 +879,13 @@ body{display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystem
 .wrap{flex:1;min-height:0;background:#525659;}
 iframe{width:100%;height:100%;border:0;display:block;background:#525659;}
 </style></head><body>
-<div class="bar">
-  <span class="ttl">__TITLE__</span>
-  <div class="zg"><button id="zo" title="축소">−</button><span class="zl" id="zl">맞춤</span><button id="zi" title="확대">+</button></div>
-  <button class="act" id="zfit">너비맞춤</button>
-  <button class="act pri" id="dl">새 창</button>
-</div>
 <div class="wrap"><iframe id="pf"></iframe></div>
 <script>
-var SRC=__SRC__;var pf=document.getElementById('pf'),zl=document.getElementById('zl');
-var levels=[50,67,75,85,100,110,125,150,175,200,250,300];var zi=-1; // -1 = page-width(맞춤)
-function applyZoom(){
-  var frag=(zi<0)?'page-width':String(levels[zi]);
-  pf.src=SRC+'#zoom='+frag+'&toolbar=0&navpanes=0';
-  zl.textContent=(zi<0)?'맞춤':(levels[zi]+'%');
-}
-document.getElementById('zi').onclick=function(){ if(zi<0){zi=levels.indexOf(110);} else if(zi<levels.length-1){zi++;} applyZoom();};
-document.getElementById('zo').onclick=function(){ if(zi<0){zi=levels.indexOf(85);} else if(zi>0){zi--;} applyZoom();};
-document.getElementById('zfit').onclick=function(){zi=-1;applyZoom();};
-document.getElementById('dl').onclick=function(){window.open(SRC,'_blank');};
+// 커스텀 줌/너비맞춤/새창 바 제거(dev_notes 260619_#1 Task1) — WKWebView/Chromium 네이티브 PDF
+// 뷰어가 자체 도구막대(확대·축소·맞춤·페이지)를 하단에 제공하므로 그쪽을 그대로 쓴다.
+var SRC=__SRC__;var pf=document.getElementById('pf');
+pf.src=SRC;
 window.addEventListener('message',function(e){if(e.data&&e.data.kmkt)document.documentElement.classList.toggle('dark',e.data.kmkt==='dark');});
-applyZoom();
 </script>
 <script>window.KMKT_ASK=function(){return{scope:__ASK_SCOPE__,id:__ASK_ID__};};</script>
 __KMKT_ASK_WIDGET__
@@ -944,7 +930,7 @@ h2{margin:0;font-size:22px;font-weight:800;letter-spacing:-.02em;}
 .rp-btn:hover{transform:translateY(-1px);}
 .rp-btn.sum{background:linear-gradient(135deg,var(--accent),#9b6bff);color:#fff;border-color:transparent;}
 .rp-btn:disabled{opacity:.5;cursor:default;transform:none;}
-.rp-sum{font-size:13px;line-height:1.7;color:var(--ink);background:var(--row);border:1px solid var(--line);
+.rp-sum{font-size:15px;line-height:1.75;color:var(--ink);background:var(--row);border:1px solid var(--line);
  border-radius:12px;padding:13px 15px;margin:-2px 0 4px;white-space:normal;}
 .rp-sum .rk{font-size:11.5px;opacity:.62;border-left:2px solid rgba(10,132,255,.4);padding:3px 9px;margin:0 0 8px;
  white-space:pre-wrap;max-height:120px;overflow:auto;}
@@ -953,6 +939,7 @@ h2{margin:0;font-size:22px;font-weight:800;letter-spacing:-.02em;}
  background:var(--card);color:var(--ink);cursor:pointer;}
 .pager button:disabled{opacity:.4;cursor:default;}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙·배경 full-bleed (CLAUDE §10.2) */
 </style></head>
 <body>
 <div class="hd"><h2>📑 증권사 리포트</h2></div>
@@ -1000,7 +987,7 @@ function summarize(c,nid,title,panel,btn){
             else{if(!started){started=true;st.innerHTML='';}ansBuf+=dj.text;st.innerHTML=md(ansBuf);}
           }}catch(e){}}}
       }
-      btn.disabled=false;btn.textContent='✨ AI 요약';panel._busy=0;
+      btn.disabled=false;btn.textContent='✨ 요약 접기';panel._busy=0;panel._loaded=1;   // 로드 후 버튼=접기 토글(dev_notes 260619_#1 Task5)
     }).catch(function(e){st.innerHTML='<span style="color:var(--up)">요약 실패: '+esc(e.message)+'</span>';btn.disabled=false;btn.textContent='✨ AI 요약';panel._busy=0;});
 }
 function render(rows){
@@ -1017,7 +1004,10 @@ function render(rows){
       '<div class="rp-sum" id="sum'+i+'" style="display:none"></div>';
   }).join('');
   document.querySelectorAll('#list .rp-btn.pdf').forEach(function(b){b.addEventListener('click',function(){var r=rows[b.dataset.i];openPdf(r.cat,r.nid,r.title);});});
-  document.querySelectorAll('#list .rp-btn.sum').forEach(function(b){b.addEventListener('click',function(){var r=rows[b.dataset.i];summarize(r.cat,r.nid,r.title,document.getElementById('sum'+b.dataset.i),b);});});
+  document.querySelectorAll('#list .rp-btn.sum').forEach(function(b){b.addEventListener('click',function(){
+    var p=document.getElementById('sum'+b.dataset.i);
+    if(p&&p._loaded){var hid=(p.style.display==='none');p.style.display=hid?'block':'none';b.textContent=hid?'✨ 요약 접기':'✨ AI 요약 펼치기';return;}  // 이미 로드됨 → 접기/펼치기 토글
+    var r=rows[b.dataset.i];summarize(r.cat,r.nid,r.title,p,b);});});
 }
 function load(){
   renderTabs();$('#state').style.display='block';$('#state').textContent='리포트를 불러오는 중…';$('#list').innerHTML='';$('#pager').style.display='none';
@@ -1065,6 +1055,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-ser
 .h-sub{font-size:12.5px;opacity:.78;margin-top:5px;}
 .main{display:grid;grid-template-columns:1fr 300px;gap:12px;padding:0 14px 22px;align-items:start;}
 @media(max-width:820px){.main{grid-template-columns:1fr;}}
+#body{max-width:1200px;margin:0 auto;}   /* 국내주식(/dashboard .pane)과 동일 너비 — 전 페이지 통일(CLAUDE §10.2) */
 .col-left,.col-right{display:flex;flex-direction:column;gap:12px;}
 .card{background:var(--card);-webkit-backdrop-filter:saturate(180%) blur(28px);backdrop-filter:saturate(180%) blur(28px);
  border:.5px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:0 8px 28px rgba(0,0,0,.06);}
@@ -1317,6 +1308,7 @@ canvas{width:100%;height:280px;display:block;}
 .ai-typing i:nth-child(2){animation-delay:.18s;} .ai-typing i:nth-child(3){animation-delay:.36s;}
 @keyframes aiPulse{0%,100%{opacity:.3;transform:scale(.8);}50%{opacity:1;transform:scale(1);}}
 @media (prefers-reduced-motion:reduce){.ai-cur,.ai-typing i{animation:none;}}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙·배경 full-bleed (CLAUDE §10.2) */
 </style></head>
 <body>
 <div class="hd"><h2>🏦 경제 지표 — 한국 · 글로벌</h2></div>
@@ -1338,7 +1330,7 @@ canvas{width:100%;height:280px;display:block;}
     <div class="cmt-dis">※ 글로벌 지표 추세에 근거한 규칙 기반 해석이며, 투자조언이 아닙니다.</div>
   </div>
   <div class="card" id="aiCard">
-    <h3>🤖 AI 해석 <span class="sub" style="font-weight:500;font-size:12px;">로컬 LLM이 지금 경제 상황을 쉽게 설명합니다</span>
+    <h3>🤖 AI 해석 <span class="sub" style="font-weight:500;font-size:12px;">AI가 지금 경제 상황을 쉽게 설명합니다</span>
       <button class="aibtn" id="aiBtn" type="button">AI 해석 보기</button></h3>
     <div id="aiOut" class="aiout" style="display:none;"></div>
   </div>
@@ -1514,7 +1506,6 @@ _ASK_WIDGET_HTML = """<div id="kmktAI" class="kmkt-ai" data-on="0">
         <button id="kmktAiPlus" class="kmkt-ai-plus" type="button" aria-label="참고 데이터 / 지시사항 주입" title="참고 데이터 / 지시사항 주입">+</button>
         <textarea id="kmktAiIn" class="kmkt-ai-in" rows="1" placeholder="메시지를 입력하세요…"></textarea>
         <button id="kmktAiModel" class="kmkt-ai-modelchip" type="button" aria-haspopup="menu" aria-label="모델 선택"><span id="kmktAiModelLbl">로컬</span><span class="mc-ar">▾</span></button>
-        <button id="kmktAiMic" class="kmkt-ai-mic" type="button" aria-label="음성 입력" title="음성 입력" hidden>🎤</button>
         <button id="kmktAiSend" class="kmkt-ai-send" type="button" aria-label="보내기">↑</button>
       </div>
     </div>
@@ -2504,6 +2495,14 @@ function goHome(){active=null;
   }
   tick();setInterval(tick,30000);sync();   // 30초 간격(상시 폴링 최소화)
 })();
+/* dev_notes 260619_#1 Task4: 로드 시 서버 영구설정으로 localStorage 시드(앱 재시작에도 시스템프롬프트 유지) */
+(function(){try{
+  fetch('/api/ai/prefs',{cache:'no-store'}).then(function(r){return r.json();}).then(function(p){
+    if(!p)return;var M={gsys:'kmkt-ai-gsys',provider:'kmkt-ai-prov',gemini_model:'kmkt-ai-gmodel'};
+    Object.keys(M).forEach(function(k){if(typeof p[k]==='string'&&p[k]!==''){try{localStorage.setItem(M[k],p[k]);}catch(e){}}});
+    var ta=document.getElementById('aipGsys');if(ta&&typeof p.gsys==='string'&&p.gsys!=='')ta.value=p.gsys;  // 팝오버 열려있으면 즉시 반영
+  }).catch(function(){});
+}catch(e){}})();
 /* 상단 AI 버튼 → 로컬 LLM(LM Studio) 제어 팝오버 (작업6) */
 (function(){
   var btn=document.getElementById('aiCtrlBtn'),pop=document.getElementById('aiPop');
@@ -2529,17 +2528,21 @@ function goHome(){active=null;
       +'<div class="aip-info">'+row('구동','Gemini 클라우드 · 무료 티어')+row('웹검색','2.5 계열 모델만')
       +row('적용 범위','AI 요약·해석·코멘터리 전체')+'</div>';
   }
+  // dev_notes 260619_#1 Task4: 변경값을 서버에도 저장(앱 재시작에도 유지)
+  function savePref(obj){try{fetch('/api/ai/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});}catch(e){}}
+  var _gsysT=null;
   function bindProv(){
     var box=document.getElementById('aipProv');if(!box)return;
     box.querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){
-      lsSet('kmkt-ai-prov',b.dataset.p);
+      lsSet('kmkt-ai-prov',b.dataset.p);savePref({provider:b.dataset.p});
       try{if(window.__kmktAiBtnSync)window.__kmktAiBtnSync();}catch(e){}
       if(b.dataset.p==='gemini'){render(cur);}else{load();}   // 로컬 전환 시 상태 재조회
     });});
     var sel=document.getElementById('aipGModel');
-    if(sel)sel.addEventListener('change',function(){lsSet('kmkt-ai-gmodel',sel.value);});
+    if(sel)sel.addEventListener('change',function(){lsSet('kmkt-ai-gmodel',sel.value);savePref({gemini_model:sel.value});});
     var ta=document.getElementById('aipGsys');
-    if(ta)ta.addEventListener('input',function(){lsSet('kmkt-ai-gsys',ta.value);});
+    if(ta)ta.addEventListener('input',function(){lsSet('kmkt-ai-gsys',ta.value);
+      clearTimeout(_gsysT);_gsysT=setTimeout(function(){savePref({gsys:ta.value});},400);});  // 디바운스 저장
   }
   function close(){open=false;pop.classList.remove('show');btn.setAttribute('aria-expanded','false');}
   function render(st){
@@ -3006,6 +3009,7 @@ th{color:var(--sub);font-weight:600;font-size:11.5px;}
 .ai-typing i:nth-child(2){animation-delay:.18s;} .ai-typing i:nth-child(3){animation-delay:.36s;}
 @keyframes aiPulse{0%,100%{opacity:.3;transform:scale(.8);}50%{opacity:1;transform:scale(1);}}
 @media (prefers-reduced-motion:reduce){.ai-cur,.ai-typing i{animation:none;}}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙·배경 full-bleed (CLAUDE §10.2) */
 </style></head><body>
 <section class="panel" id="formPanel">
   <h2>🧪 백테스터 <span class="sub" style="font-weight:500;">국내 일봉 룰 전략 검증 · 신호=종가, 체결=다음 봉 · 로컬 연산</span></h2>
@@ -3596,6 +3600,7 @@ html.dark .card:hover{box-shadow:var(--g-edge), 0 16px 40px rgba(0,0,0,.45);}
 .m4-prog-row{display:flex;justify-content:space-between;align-items:center;width:min(460px,84%);
  font-size:12px;color:#9fb0e8;font-weight:600;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion:reduce){.pane.active,.m4-hero,.m4-orb{animation:none!important;}}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙·배경 full-bleed (CLAUDE §10.2) */
 </style></head>
 <body>
 <div id="state" class="state">해외 종목 정보를 불러오는 중…</div>
@@ -4380,13 +4385,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-ser
 
 /* ── 메인 레이아웃 (flex + 드래그 리사이저) ── */
 .main{display:flex;gap:10px;padding:0 14px 10px;align-items:stretch;min-width:0;}
-.col-left{flex:1 1 0;min-width:240px;display:flex;flex-direction:column;gap:10px;}
+.col-left{flex:1 1 0;min-width:200px;display:flex;flex-direction:column;gap:10px;}
 .rsz{flex:0 0 6px;align-self:stretch;cursor:col-resize;border-radius:3px;background:var(--line);
  transition:background .15s;}
 .rsz:hover,.rsz.drag{background:var(--accent);}
-.right-group{flex:0 1 var(--rgw,430px);min-width:0;max-width:660px;display:flex;gap:10px;align-items:flex-start;}
-.col-ob{flex:1 1 0;min-width:0;}
-.col-paper{flex:1 1 0;min-width:0;}
+/* 세션2 Task6: 호가창+페이퍼를 세로로 쌓아 우측 컬럼이 좌측 높이를 채우게 → 하단 빈칸 제거.
+   기본 폭 400, 드래그(리사이저를 왼쪽으로)로 좌측(차트·체결·투자자)을 더 좁게 가능(max 760). */
+.right-group{flex:0 1 var(--rgw,400px);min-width:0;max-width:760px;display:flex;flex-direction:column;gap:10px;align-items:stretch;}
+.col-ob{flex:0 0 auto;min-width:0;}
+.col-paper{flex:1 1 auto;min-width:0;}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙 (CLAUDE §10.2) */
 @media(max-width:760px){.main{flex-wrap:wrap;}.rsz{display:none;}
  .col-left{flex:1 1 100%;}.right-group{flex:1 1 100%;}}
 
@@ -4841,7 +4849,7 @@ $('#sym').addEventListener('keydown',function(e){if(e.key==='Enter')setCode(this
  rsz.addEventListener('mousedown',function(e){drag=true;sx=e.clientX;sw=rg.getBoundingClientRect().width;
    rsz.classList.add('drag');document.body.style.cursor='col-resize';document.body.style.userSelect='none';e.preventDefault();});
  window.addEventListener('mousemove',function(e){if(!drag)return;
-   var w=Math.max(330,Math.min(660,sw-(e.clientX-sx)));main.style.setProperty('--rgw',w+'px');});
+   var w=Math.max(300,Math.min(760,sw-(e.clientX-sx)));main.style.setProperty('--rgw',w+'px');});  /* 세션2 Task6: 드래그 범위 확대(좌측 더 좁게) */
  window.addEventListener('mouseup',function(){if(!drag)return;drag=false;rsz.classList.remove('drag');
    document.body.style.cursor='';document.body.style.userSelect='';try{drawChart();}catch(e){}});
 })();
@@ -5069,21 +5077,24 @@ html.dark .csg{background:rgba(120,120,128,.28);} html.dark .csg button.on{backg
 .kcard .kv{font-size:17px;font-weight:800;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .kcard .kc{font-size:11.5px;font-weight:600;margin-top:2px;}
 .lhead{font-size:15px;font-weight:800;margin:20px 2px 8px;}
-.wtbl{width:100%;border-collapse:collapse;font-size:13px;}
-.wtbl th,.wtbl td{padding:10px 8px;border-bottom:.5px solid var(--line);text-align:right;white-space:nowrap;}
-.wtbl th{color:var(--sub);font-weight:600;font-size:11.5px;}
+.wtbl{width:100%;border-collapse:collapse;font-size:15px;}                              /* 세션2 Task4: 가독성 ↑ */
+.wtbl th,.wtbl td{padding:6px 8px;border-bottom:.5px solid var(--line);text-align:right;white-space:nowrap;}  /* 행 간격 ↓ */
+.wtbl th{color:var(--sub);font-weight:600;font-size:12px;}
 .wtbl th:nth-child(2),.wtbl td:nth-child(2){text-align:left;}
+.wtbl td:nth-child(2){font-weight:700;}                                                /* 종목명 볼드 */
+.wtbl td:nth-child(2) span{font-weight:500;}                                           /* 티커 보조텍스트는 보통 굵기 */
 .wtbl .rk{color:var(--sub);width:30px;}
 .wtbl tbody tr{cursor:pointer;transition:background .12s;} .wtbl tbody tr:hover{background:var(--row);}
 .gnote{color:var(--sub);font-size:13px;line-height:1.6;padding:26px 16px;background:var(--card);
  border:.5px solid var(--line);border-radius:14px;text-align:center;}
+body{padding-left:max(14px,calc((100% - 1200px)/2));padding-right:max(14px,calc((100% - 1200px)/2));}  /* 너비 통일: 국내주식(1200) 중앙·배경 full-bleed (CLAUDE §10.2) */
 </style></head><body>
 <div class="vtabs" id="vtabs">
-  <span class="vtab" data-v="kr">🇰🇷 국내</span>
   <span class="vtab on" data-v="us">🇺🇸 미국</span>
   <span class="vtab" data-v="global">🌍 글로벌</span>
   <span class="asof" id="asof"></span>
-</div>
+</div><!-- 🇰🇷 국내 탭 제거(세션2 Task5): 동일 기능이 '시장 현황'에 있음. 기본 view='us'. -->
+
 <p class="lead">국가별 현지 시간 기준 · 상승 <span class="up">●</span> / 하락 <span class="down">●</span></p>
 <div id="state" class="state">세계 시장 데이터를 불러오는 중…</div>
 <div id="body" style="display:none;">
@@ -5105,7 +5116,7 @@ function setTheme(d){document.documentElement.classList.toggle('dark',!!d);redra
 window.addEventListener('message',function(e){if(e.data&&e.data.kmkt)setTheme(e.data.kmkt==='dark');});
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function fmtN(n,d){return (Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:(d==null?2:d),maximumFractionDigits:(d==null?2:d)});}
-function usMcap(b){b=Number(b)||0;return b>=1000?('$'+(b/1000).toFixed(2)+'T'):('$'+b+'B');}
+function usMcap(b){b=Number(b)||0;return b>=1000?('$'+(b/1000).toFixed(2)+'T'):('$'+b.toFixed(2)+'B');}  /* 세션2 Task4: 소수점 정리 */
 function krMcap(eok){eok=Number(eok)||0;return eok>=10000?(fmtN(eok/10000,1)+'조'):(fmtN(eok,0)+'억');}
 var view='us', mapExch='all', mapMkt='kospi', lastCards=[];
 
