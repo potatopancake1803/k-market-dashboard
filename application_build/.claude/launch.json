@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["MARKET_PORT=8793", "MI_NO_OPEN=1", "MI_NO_PREWARM=1", "uv", "run", "--directory", "/Users/minjun1803/Documents/Python/Project_Market_Dashboard", "scripts/market_dashboard3_realtime.py"],
+      "port": 8793
+    },
+    {
+      "name": "dashboard-dev",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["MARKET_PORT=8795", "MI_NO_OPEN=1", "MI_NO_PREWARM=1", "KMKT_DEV=1", "uv", "run", "--directory", "/Users/minjun1803/Documents/Python/Project_Market_Dashboard", "scripts/market_dashboard3_realtime.py"],
+      "port": 8795
+    }
+  ]
+}

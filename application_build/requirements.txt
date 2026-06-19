@@ -1,0 +1,21 @@
+# K-Market Dashboard 앱 빌드/실행 의존성 (macOS · Apple Silicon)
+# 네이티브 창
+pywebview>=5.0
+pyobjc-core>=10.0; sys_platform == 'darwin'
+pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'
+pyobjc-framework-WebKit>=10.0; sys_platform == 'darwin'
+
+# 원본 대시보드 런타임 (scripts/market_dashboard3_realtime.py 의 의존성과 동일)
+flask>=3.0
+httpx>=0.27
+polars>=1.0
+pandas>=2.0
+numpy>=1.26
+pyarrow>=15.0
+lxml>=5.0
+plotly>=5.20
+python-dotenv>=1.0
+scipy>=1.11
+duckdb>=0.10.0
+websockets>=12.0    # KIS 실시간 ETF NAV (H0STNAV0) 웹소켓
+mlx>=0.15.0; sys_platform == 'darwin' and platform_machine == 'arm64'

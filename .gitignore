@@ -1,0 +1,36 @@
+__pycache__/
+*.pyc
+.DS_Store
+output/
+.cache/
+
+# Build artifacts & virtualenvs (heavy — never commit; ~1.8GB) — git이 삼키면 저장소 폭증
+.venv/
+.venv-build/
+**/.venv/
+**/.venv-build/
+application_build/dist/
+application_build/build/
+*.app
+*.dmg
+*.spec.bak
+
+# Large reference docs / data dumps (코드 아님 — 추적 불필요, 용량만 큼)
+API_documents/
+data/
+
+# Auto-reflect backups (롤백용 로컬 백업 — 이력은 changes_history 가 담음)
+application_build/changes_history/_autoreflect/
+
+# Archived/abandoned artifacts (옛 아이콘 시도 등 잔재 — 코드 이력 아님, 53MB)
+application_build/_archive/
+
+# API Keys — never commit any env/key files (plaintext secrets)
+.env
+*.env
+**/.env
+**/*.env
+**/API.env
+api_documents/API.env
+**/API_Key_*.env
+**/한국투자증권/

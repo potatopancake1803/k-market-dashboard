@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["MARKET_PORT=8781", "MI_NO_OPEN=1", "MI_NO_PREWARM=1", "uv", "run", "scripts/market_dashboard3_realtime.py"],
+      "port": 8781
+    }
+  ]
+}
