@@ -25,6 +25,11 @@ application_build/changes_history/_autoreflect/
 # Archived/abandoned artifacts (옛 아이콘 시도 등 잔재 — 코드 이력 아님, 53MB)
 application_build/_archive/
 
+# Screenshot work-temp folders (폐기 캡처 임시 보관 — README용 정식 png만 추적)
+docs/screenshots/_trash/
+docs/screenshots/_src/
+docs/screenshots/README_preview.html
+
 # API Keys — never commit any env/key files (plaintext secrets)
 .env
 *.env
