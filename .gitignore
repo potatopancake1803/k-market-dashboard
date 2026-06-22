@@ -29,6 +29,7 @@ application_build/_archive/
 docs/screenshots/_trash/
 docs/screenshots/_src/
 docs/screenshots/_new/
+docs/screenshots/_ai/
 docs/screenshots/README_preview.html
 
 # API Keys — never commit any env/key files (plaintext secrets)
